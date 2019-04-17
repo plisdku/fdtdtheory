@@ -1,0 +1,995 @@
+\chapter{Forward and Adjoint FDTD}
+\label{chap:fdtd}
+
+\section{Maxwell's equations, continuous}
+
+Maxwell's equations can be written in full form for $\ve d$, $\ve e$, $\ve b$, $\ve h$ or reduced form for only $\ve e$ and $\ve h$ (among other ways).  The reduced form including a linear dispersive permittivity tensor is
+%
+\begin{equation}
+\begin{bmatrix}
+-\partial_t \, \epsilon(t) \ast & \nabla \times \\
+\nabla \times & \partial_t \mu
+\end{bmatrix}
+\begin{bmatrix} \ve{e} \\ \ve{h} \end{bmatrix}
+=
+\begin{bmatrix}
+\ve{J} \\ -\ve{M}
+\end{bmatrix}.
+\end{equation}
+%
+The full form is
+%
+\begin{equation}
+\begin{bmatrix}
+-\partial_t & & & \nabla \times \\
+-1 & \epsilon(t) \ast & & \\
+& \nabla \times & \partial_t & \\
+& & -1 & \mu
+\end{bmatrix}
+\begin{bmatrix} \ve{d} \\ \ve{e} \\ \ve{b} \\ \ve{h} \end{bmatrix}
+=
+\begin{bmatrix} \ve{J} \\ 0 \\ -\ve{M} \\ 0 \end{bmatrix}.
+\end{equation}
+%
+Some operators in the system matrix commute.  For instance $\partial_t$ commutes with $\epsilon(t) \ast$ and $\nabla \times$.
+
+The FDTD matrix is obtained by discretizing all of the component operators of the continuous Maxwell system matrix.  Commuting continuous operators cannot always be discretized into commuting discrete operators, but if the continuous operators can be discretized into circulant matrices then they will commute.  FDTD represents a finite number of timesteps so its operators tend to be Toeplitz in time, not circulant.  For transient simulations that begin and end with zero field, this distinction is unimportant so I will promote all Toeplitz matrices to circulant matrices.
+
+\section{Maxwell's equations, discrete}
+
+The system matrix for linear dispersive FDTD can be written in a reduced form for just the $\ve e$ and $\ve h$ fields, or in a full form with $\ve d$, $\ve e$, $\ve b$ and $\ve h$ for implementation.  The time derivatives become forward or backward differences, the curls are also implemented with forward and backward differences, and dispersive materials are implemented as IIR filters.
+
+The Yee update scheme places the $\ve e$ and $\ve h$ fields at staggered positions in space and time.  In my bookkeeping, I place $\ve e$, $\ve d$ and $\ve M$ at integer timesteps and $\ve h$, $\ve b$ and $\ve J$ at half-integer timesteps.  At timestep $n$, the corresponding fields and currents are (denoted variously as)
+%
+\begin{equation}
+\begin{aligned}
+    \ve e[n] &= \ve e(n \Delta t) &&= \ve e^n \\
+    \ve d[n] &= \ve d(n \Delta t) &&= \ve d^n \\
+    \ve b[n] &= \ve b( (n+ 0.5)\Delta t) &&= \ve b^{n+\frac{1}{2}} \\
+    \ve h[n] &= \ve h( (n+0.5)\Delta t) &&= \ve h^{n + \frac{1}{2}} \\
+    \ve J[n] &= \ve J( (n-0.5)\Delta t) &&= \ve J^{n - \frac{1}{2}} \\
+    \ve M[n] &= \ve M(n \Delta t) &&= \ve M^n.
+\end{aligned}
+\end{equation}
+%
+The discrete derivatives are forward or backward differences, denoted $\tilde \partial$ and $\hat \partial$ respectively:
+%
+\begin{equation}
+\begin{aligned}
+	\tilde \partial_t f(t) &= \frac{f(t+\Delta t) - f(t)}{\Delta t} \\
+	\hat \partial_t f(t) &= \frac{f(t) - f(t-\Delta t)}{\Delta t} \\
+	\tilde \nabla \times \ve g(x,y,z) &= 
+		\begin{bmatrix}
+			\tilde \partial_y g_z - \tilde \partial_z g_y \\
+			\tilde \partial_z g_x - \tilde \partial_x g_z \\
+			\tilde \partial_x g_y - \tilde \partial_y g_x \\
+		\end{bmatrix} \\
+	\hat \nabla \times \ve g(x,y,z) &=
+		\begin{bmatrix}
+			\hat \partial_y g_z - \tilde \partial_z g_y \\
+			\hat \partial_z g_x - \tilde \partial_x g_z \\
+			\hat \partial_x g_y - \tilde \partial_y g_x \\
+		\end{bmatrix}.
+\end{aligned}
+\end{equation}
+%
+I also use $z$ for the time shift operator, $z y(t) = y(t + \Delta t)$.  At angular frequency $\omega$, $z = e^{i \omega \Delta t}$.
+
+\subsection{FDTD Matrix}
+
+An $N$-timestep FDTD simulation will solve for $N$ timesteps of fields using $N$ timesteps of electromagnetic currents.  The first timestep is responsible for initial conditions $\ve e[0]$ and $\ve h[0]$ which depend on $\ve J[0]$ and $\ve M[0]$.  A three-timestep system in reduced form can be written
+%
+\begin{equation}
+\begin{bmatrix}
+- \frac{\epsilon}{\Delta t} & & & & & \\
+\tilde{\nabla} \times & \frac{\mu}{\Delta t} & & & & \\
+\frac{\epsilon}{\Delta t} & \hat{\nabla} \times & -\frac{\epsilon}{\Delta t} & & & \\
+& -\frac{\mu}{\Delta t} & \tilde{\nabla} \times & \frac{\mu}{\Delta t} & &  \\
+& & \frac{\epsilon}{\Delta t} & \hat{\nabla} \times & -\frac{\epsilon}{\Delta t} & \\
+& & & -\frac{\mu}{\Delta t} & \tilde{\nabla} \times & \frac{\mu}{\Delta t}
+\end{bmatrix}
+%
+\begin{bmatrix}
+\ve e^0 \\ \ve h^{0.5} \\ \ve e^1 \\ \ve h^{1.5} \\ \ve e^2 \\ \ve h^{2.5}
+\end{bmatrix}
+=
+\begin{bmatrix}
+\ve J^{-0.5} \\ -\ve M^0 \\ \ve J^{0.5} \\ -\ve M^1 \\ \ve J^{1.5} \\ -\ve M^2 
+\end{bmatrix}.
+\label{eqn:fdtd_matrix_3_timesteps}
+\end{equation}
+%
+Using the discrete operators, the reduced FDTD system of any number of timesteps is written
+%
+\begin{equation}
+L_r \ve{u}_r =
+\begin{bmatrix}
+-\tilde{\partial}_t \epsilon & \hat{\nabla}\times \\
+\tilde{\nabla}\times & \hat{\partial}_t \mu
+\end{bmatrix}
+\begin{bmatrix} \ve{e} \\ \ve{h} \end{bmatrix}
+=
+\begin{bmatrix} z \ve{J} \\ -\ve{M} \end{bmatrix}.
+\label{eqn:forwardSystem}
+\end{equation}
+%
+PAY ATTENTION HERE.  Note that the time shifted current $z \ve J$ is in fact consistent with Equation \ref{eqn:fdtd_matrix_3_timesteps}.  In the limit that $\Delta t \to 0$, also $z \ve J \to \ve J$.
+
+
+
+\section{Time-harmonic reciprocity in FDTD}
+
+Solve two systems, system 1 and system 2.
+%
+\begin{equation}
+L_r \ve{u}_{r1} =
+\begin{bmatrix}
+-\tilde{\partial}_t \epsilon & \hat{\nabla}\times \\
+\tilde{\nabla}\times & \hat{\partial}_t \mu
+\end{bmatrix}
+\begin{bmatrix} \ve{e}_1 \\ \ve{h}_1 \end{bmatrix}
+=
+\begin{bmatrix} z \ve{J}_1 \\ -\ve{M}_1 \end{bmatrix}.
+\label{eqn:forwardSystem}
+\end{equation}
+%
+\begin{equation}
+L_r \ve{u}_{r2} =
+\begin{bmatrix}
+-\tilde{\partial}_t \epsilon & \hat{\nabla}\times \\
+\tilde{\nabla}\times & \hat{\partial}_t \mu
+\end{bmatrix}
+\begin{bmatrix} \ve{e}_2 \\ \ve{h}_2 \end{bmatrix}
+=
+\begin{bmatrix} z \ve{J}_2 \\ -\ve{M}_2 \end{bmatrix}.
+\label{eqn:forwardSystem}
+\end{equation}
+%
+Using $\tilde{\partial}_t = \frac{z - 1}{\Delta t}$ and $\hat{\partial}_t = \frac{1 - z^{-1}}{\Delta t}$, observe that $L_r^\dagger = L_r^\ast$ for symmetric $\epsilon$ and $\mu$.  Then
+%
+\begin{equation}
+\boxed{
+	\begin{bmatrix} z \ve{J}_2 \\ -\ve{M}_2 \end{bmatrix}^\dagger
+	\begin{bmatrix} \ve{e}_1 \\ \ve{h}_1 \end{bmatrix}
+	=
+	\begin{bmatrix} \ve{e}_2 \\ \ve{h}_2 \end{bmatrix}^\dagger
+	\begin{bmatrix} z \ve{J}_1 \\ -\ve{M}_1 \end{bmatrix}.
+}%boxed
+\label{eqn:z_reciprocity}
+\end{equation}
+%
+The FFT of raw FDTD fields will satisfy this reciprocity relation.  However, the physical interpretation of the fields must take into account their half-timestep offsets (which amount to phase factors of $z^{0.5}$).  It is desirable to present FDTD users with unshifted fields in the frequency domain.  These obey another reciprocity relation.
+
+\subsection{Fourier domain reciprocity}
+
+The Fourier transforms of fields of interest can be approximated with the following midpoint rule integrations:
+%
+\begin{equation}
+	\begin{aligned}
+		\es{F}\{ \ve e(t) \} &= \Delta t \sum_n e^{-i \omega n \Delta t} \ve e(n \Delta t) &&= \Delta t \, \ve e(z)\\
+		\es{F}\{ \ve h(t) \} &= \Delta t \sum_n e^{-i \omega (n+0.5) \Delta t} \ve h( (n+0.5) \Delta t) &&= \Delta t \, z^{-0.5} \ve h(z) \\
+		\es{F}\{ \ve J(t) \} &= \Delta t \sum_n e^{-i \omega (n-0.5) \Delta t} \ve J( (n-0.5) \Delta t) &&= \Delta t \, z^{0.5} \ve J(z) \\
+		\es{F}\{ \ve M(t) \} &= \Delta t \sum_n e^{-i \omega n \Delta t} \ve M( n \Delta t) &&= \Delta t \, \ve M(z).
+	\end{aligned}
+\end{equation}
+%
+FDTD acts on these values by
+%
+\begin{equation}
+	\begin{bmatrix}
+	-\tilde{\partial}_t \epsilon & \hat{\nabla}\times \\
+	\tilde{\nabla}\times & \hat{\partial}_t \mu
+	\end{bmatrix}
+	\begin{bmatrix} \es{F} \left\{ \ve{e} \right\} \\ z^{0.5} \es{F} \left\{ \ve{h} \right\} \end{bmatrix}
+	=
+	\begin{bmatrix} z^{0.5} \es{F} \left\{ \ve{J} \right\} \\ - \es{F} \left\{ \ve{M} \right\} \end{bmatrix}.
+\end{equation}
+%
+By direct substitution into Equation \ref{eqn:z_reciprocity}, another exact reciprocity relation is obtained,
+%
+\begin{equation}
+\boxed{
+	\begin{bmatrix} z^{0.5} \es{F} \left\{ \ve{J}_2 \right\} \\ - \es{F}\left\{\ve{M}_2\right\} \end{bmatrix}^\dagger
+	\begin{bmatrix} \es{F}\left\{ \ve{e}_1 \right\} \\ z^{0.5} \es{F}\left\{\ve{h}_1 \right\} \end{bmatrix}
+	=
+	\begin{bmatrix} \es{F} \left\{ \ve{e}_2 \right\} \\ z^{0.5} \es{F} \left\{ \ve{h}_2 \right\} \end{bmatrix}^\dagger
+	\begin{bmatrix} z^{0.5} \es{F} \left\{ \ve{J}_1 \right\} \\ - \es{F} \left\{ \ve{M}_1 \right\} \end{bmatrix}.
+}%boxed
+\label{eqn:fourier_reciprocity}
+\end{equation}
+%
+This is curious to me because the error of FDTD is supposed to be second-order, yet this expression differs from physical reciprocity by first-order terms.  Perhaps the root of the discrepancy is in using a Riemann sum to approximate a Fourier transform.  I have written a midpoint integration which has second-order error.  This suggests again that my reciprocity relation could be second-order accurate.  There is a spatial integration implicit in these expressions as well.
+
+\subsection{Dispersive permittivity}
+
+At one point in space the components of $\ve e$ and $\ve d$ are coupled by $\epsilon(t) \ast$.  The IIR filter implementation of $\epsilon$ is
+%
+\begin{equation}
+e^n + a_1 e^{n-1} + a_2 e^{n-2} + \cdots = b_0 d^n + b_1 d^{n-1} + b_2 d^{n-2} + \cdots
+\label{eqn:dispersiveImplementation}
+\end{equation}
+%
+or in the $z$ domain
+%
+\begin{equation}
+e(z) = \epsilon(z)^{-1} d(z) = \frac{b_0 + b_1 z^{-1} + b_2 z^{-2} + \cdots}{1 + a_1 z^{-1} + a_2 z^{-2} + \cdots} d(z)
+\end{equation}
+%
+or written with $A$ and $B$ matrices in the time domain,
+%
+\begin{equation}
+\begin{bmatrix}
+a_0 \\
+a_1 & a_0 \\
+a_2 & a_1 & a_0 \\
+\vdots & & & \ddots
+\end{bmatrix}
+\begin{bmatrix}
+\vdots \\ e^{n} \\ e^{n+1} \\ \vdots
+\end{bmatrix}
+=
+\begin{bmatrix}
+b_0 \\
+b_1 & b_0 \\
+b_2 & b_1 & b_0 \\
+\vdots & & & \ddots
+\end{bmatrix}
+\begin{bmatrix}
+\vdots \\ d^{n} \\ d^{n+1} \\ \vdots
+\end{bmatrix}.
+\end{equation}
+%
+The permittivity convolution is seen to be the product $\epsilon(t) \ast = B^{-1}A$.  These $A$ and $B$ matrices are clearly Toeplitz and not circulant but will be treated as circulant, just as I have treated $\ve e$ and $\ve d$ as having infinite timesteps from $n = - \infty$ to $n = \infty$.
+
+When $\epsilon$ is a tensor, each tensor component is implemented as an IIR filter.
+
+\subsection{Discrete system matrix}
+
+The full system matrix is
+%
+\begin{equation}
+L \ve{u} =
+\begin{bmatrix}
+-\tilde{\partial}_t & & & \hat{\nabla}\times \\
+-B & A & & \\
+& \tilde{\nabla} \times & \hat{\partial}_t  & \\
+& & \mu^{-1} & -1
+\end{bmatrix}
+\begin{bmatrix}
+\ve{d} \\ \ve{e} \\ \ve{b} \\ \ve{h}
+\end{bmatrix}
+=
+\begin{bmatrix}
+z \ve{J} \\ 0 \\ -\ve{M} \\ 0 
+\end{bmatrix}.
+\end{equation}
+%
+It can be brought to a reduced form as well,
+%
+\begin{equation}
+L_r \ve{u}_r =
+\begin{bmatrix}
+-\tilde{\partial}_t B^{-1} A & \hat{\nabla}\times \\
+\tilde{\nabla}\times & \hat{\partial}_t \mu
+\end{bmatrix}
+\begin{bmatrix} \ve{e} \\ \ve{h} \end{bmatrix}
+=
+\begin{bmatrix} z \ve{J} \\ -\ve{M} \end{bmatrix}.
+\label{eqn:forwardSystem}
+\end{equation}
+
+
+
+\section{Adjoint FDTD}
+
+Let $F(\ve e, \ve h)$ be the objective functional.  The sensitivity of the functional to a system parameter $p$ can be obtained in adjoint form by first solving the forward system,
+%
+\begin{equation}
+L \ve{u} = \ve{S}
+\end{equation}
+%
+then the adjoint system\footnote{Don't think too hard about $\ppp{F}{\ve u}^\dagger$ being transposed.  This is just because gradients are row vectors not column vectors.},
+%
+\begin{equation}
+L^\dagger \ve{v} = \frac{\partial F}{\partial \ve u}^\dagger
+\end{equation}
+%
+and then calculating the quadratic form
+%
+\begin{equation}
+\pp{F}{p} = \ve{v}^\dagger \pp{\ve S}{p} - \ve{v}^\dagger \pp{L}{p} \ve u.
+\label{eqn:sensitivityEquation}
+\end{equation}
+%
+The implementation of the adjoint system is our concern now.  Even with dispersive materials, the adjoint system can be shown to be equivalent to a time-reversed forward system.
+
+\subsection{Many transposes}
+
+Our electromagnetic fields, \emph{e.g.} $\ve{e}$, are 3-vector functions of time and space.  The discrete $\ve e$ is a multidimensional array with three spatial indices $x$, $y$ and $z$; one time index $t$; and one direction (polarization) index $p$.  It is then unrolled into a column vector, but the single index of the column vector is understood to step over the five array dimensions of $\ve e$ in some order.
+
+A matrix acting on the array $\ve e$ can be seen as having five row indices and five column indices.  Transposing a matrix such as $A$ involves transposing all the spatial indices, the time index, and the polarization index.  Transposing the full system matrix $L$ also transposes the field index (which distinguishes the four fields $\ve d$, $\ve e$, $\ve b$ and $\ve h$).  The adjoint system matrix $L^\dagger$ is the composition of the six transposes of $L$.
+
+Let us group the spatial transposes into one superscript $s$.  The time transpose can be denoted by a superscript $t$ and the polarization transpose by a superscript $p$.  So the transpose of a matrix $X$ is a composition of transposes,
+%
+\begin{equation}
+X^\dagger = X^{stp}.
+\end{equation}
+%
+We will not need to use the field transpose.
+
+\subsection{The time-reversal matrix}
+
+We introduce the time-reversal matrix $R$, a Hankel matrix acting on the time index alone:
+%
+\begin{equation}
+R =
+\begin{bmatrix}
+& & & & 1 \\
+& & & 1 & \\
+& & \ddots & &\\
+& 1 & & & \\
+1 & & & &
+\end{bmatrix}.
+\end{equation}
+%
+The time-reversal matrix is its own inverse and also has the property that $R X R = X^t$ for Toeplitz or circulant matrices $X$.  For a banded matrix $D$ with diagonals $\cdots \ve{d}_{-1}(t), \ve{d}_0(t), \ve{d}_1(t), \cdots$, the time-reversal matrix will reverse the entries of each diagonal as well as reversing the order of the diagonals, so the diagonals of $R D R$ are $\cdots \ve{d}_{1}(-t), \ve{d}_0(-t), \ve{d}_{-1}(-t), \cdots$.  
+%
+\begin{equation}
+R
+\begin{bmatrix}
+a_0(t_0) \\
+a_1(t_1) & a_0(t_1) \\
+a_2(t_2) & a_1(t_2) & a_0(t_2) \\
+\vdots & & & \ddots
+\end{bmatrix}
+R
+=
+\begin{bmatrix}
+\ddots & & & \vdots \\
+& a_0(t_2) & a_1(t_2) & a_2(t_2) \\
+& & a_0(t_1) & a_1(t_2) \\
+& & & a_0(t_0)
+\end{bmatrix}.
+\end{equation}
+%
+This latter property would be interesting for systems where $\epsilon$ is modulated over time or nonlinear.
+
+The time-reversal matrix only acts on the time index, however.  Its actions on the components of the FDTD system matrix are as follows:
+%
+\begin{equation}
+\begin{aligned}
+R \tilde{\partial}_t R &= \tilde{\partial}_t^t = -\hat{\partial}_t \\
+R \hat{\partial}_t R &= \hat{\partial}_t^t = -\tilde{\partial}_t \\
+R A R &= A^t \\
+R B R &= B^t \\
+R \tilde{\nabla}\times R &= \tilde{\nabla} \times \\
+R \hat{\nabla}\times R &= \hat{\nabla} \times \\
+RR &= \mathbb{1}.
+\end{aligned}
+\end{equation}
+
+\subsection{Adjoint FDTD is time-reversed FDTD}
+
+We will show that the adjoint FDTD system is equivalent to a time-reversed forward FDTD system by time-reversing both sides of the equation.
+
+The adjoint (full) FDTD system is
+%
+\begin{equation}
+L^\dagger \ve{v} = \pp{F}{\ve u}^\dagger
+\end{equation}
+%
+or
+%
+\begin{equation}
+\begin{bmatrix}
+\hat{\partial}_t & -B^\dagger & & \\
+& A^\dagger & \hat{\nabla} \times & \\
+& & -\tilde{\partial}_t & \mu^{-\dagger} \\
+\tilde{\nabla} \times & & & -1
+\end{bmatrix}
+\begin{bmatrix}
+\mathcal{E}  \\ \\ \mathcal{H} \\ \\
+\end{bmatrix}
+=
+\begin{bmatrix}
+(\ppp{F}{\ve d})^\dagger \\
+(\ppp{F}{\ve e})^\dagger \\
+(\ppp{F}{\ve b})^\dagger \\
+(\ppp{F}{\ve h})^\dagger
+\end{bmatrix}.
+\end{equation}
+%
+We only have a need to name two of the four adjoint fields\footnote{Naming the first and third fields $\mathcal{E}$ and $\mathcal{H}$ instead of $\mathcal{D}$ and $\mathcal{B}$ to resemble the forward system makes sense once the adjoint system is shown to be related to a time-reversed forward system.}, $\mathcal{E}$ and $\mathcal{H}$.  However all four fields are nonzero.
+
+The adjoint (reduced) FDTD system can be obtained either by reducing the full adjoint FDTD system or by taking the adjoint of the reduced FDTD system, with identical results.
+%
+\begin{equation}
+L_r^\dagger \ve{v}_r = \pp{F}{\ve u_r}^\dagger
+\label{eqn:reducedAdjointAbbreviated}
+\end{equation}
+%
+or
+%
+\begin{equation}
+\begin{bmatrix}
+A^\dagger B^{-\dagger} \hat{\partial}_t & \hat{\nabla} \times \\
+\tilde{\nabla} \times & -\mu^\dagger \tilde{\partial}_t
+\end{bmatrix}
+\begin{bmatrix}
+\mathcal{E} \\ \mathcal{H}
+\end{bmatrix}
+=
+\begin{bmatrix}
+(\ppp{F}{\ve e})^\dagger + A^\dagger B^{-\dagger} (\ppp{F}{\ve d})^\dagger \\
+(\ppp{F}{\ve h})^\dagger + \mu^\dagger (\ppp{F}{\ve b})^\dagger
+\end{bmatrix}.
+\label{eqn:reducedAdjoint}
+\end{equation}
+%
+We will assume that $\ppp{F}{\ve d} = 0$ and $\ppp{F}{\ve b} = 0$ for simplicity (as we haphazardly did in writing the right-hand side of Equation \ref{eqn:reducedAdjointAbbreviated} but not Equation \ref{eqn:reducedAdjoint}), but at any moment they may be added back in next to $\ppp{F}{\ve e}$ and $\ppp{F}{\ve h}$ with the appropriate factors.
+
+Left-multiply both sides of the reduced adjoint system (Equation \ref{eqn:reducedAdjointAbbreviated}) by $R$ and insert $RR = \mathbb{1}$ between $L_r^\dagger$ and $\ve{v}_r$.  Applying $R$ will time-transpose the $L_r^\dagger$ operator because all of its pieces are circulant matrices in their time index:
+%
+\begin{equation}
+\begin{bmatrix}
+-A^{sp} B^{-sp} \tilde{\partial}_t & \hat{\nabla} \times \\
+\tilde{\nabla} \times & \mu^{-sp} \hat{\partial}_t
+\end{bmatrix}
+R \ve{v}_r
+=
+R
+\begin{bmatrix}
+(\ppp{F}{\ve e})^\dagger \\
+(\ppp{F}{\ve h})^\dagger
+\end{bmatrix}.
+\end{equation}
+%
+Because $A$, $B^{-1}$, $\tilde{\partial}_t$ and $\hat{\partial}_t$ are all circulant matrices, they commute and can be reordered to closely resemble the forward FDTD matrix (Equation \ref{eqn:forwardSystem}).
+%
+\begin{equation}
+\begin{bmatrix}
+-\tilde{\partial}_t B^{-sp} A^{sp} & \hat{\nabla} \times \\
+\tilde{\nabla} \times & \hat{\partial}_t \mu^{-sp} 
+\end{bmatrix}
+R \ve{v}_r
+=
+R
+\begin{bmatrix}
+(\ppp{F}{\ve e})^\dagger \\
+(\ppp{F}{\ve h})^\dagger
+\end{bmatrix}.
+\end{equation}
+%
+Define a new reduced forward matrix $L_r'$,
+%
+\begin{equation}
+L_r' = 
+\begin{bmatrix}
+-\tilde{\partial}_t B^{-sp} A^{sp} & \hat{\nabla} \times \\
+\tilde{\nabla} \times & \hat{\partial}_t \mu^{-sp} 
+\end{bmatrix}.
+\end{equation}
+%
+Isotropic, spatially-nondispersive (local) permittivities are diagonal in their $s$ and $p$ indices, so in this common situation $B^{-sp} = B^{-1}$ and $A^{sp} = A$, so $L' = L$.  In the common case of dispersive permittivities, the adjoint system has now been coerced into exactly the form of the forward system and $\ve{v}_r$ can be solved for by a combination of forward FDTD and time-reversals:
+%
+\begin{equation}
+\boxed{
+L_r' (R \ve{v}_r) = R \left(\pp{F}{\ve u_r}\right)^\dagger.
+}%boxed
+\label{eqn:adjointAsForward}
+\end{equation}
+%
+
+\subsection{System sensitivity}
+
+Using the reduced FDTD equations, the system sensitivity (Equation \ref{eqn:sensitivityEquation}) becomes
+%
+\begin{equation}
+\pp{F}{p} = -\mathcal{E}^\dagger \tilde{\partial}_t \left( -\pp{\epsilon(t) \ast}{p} \right) \ve e.
+\end{equation}
+%
+With $\epsilon(t) \ast = B^{-1} A$,
+%
+\begin{equation}
+\begin{aligned}
+\pp{F}{p} &= -\mathcal{E}^\dagger \tilde{\partial}_t \left( B^{-1}\pp{B}{p}B^{-1}A - B^{-1} \pp{A}{p} \right) \ve e \\
+&= -\mathcal{E}^\dagger \tilde{\partial}_t \left( B^{-1}\pp{B}{p} \ve d - B^{-1} \pp{A}{p} \ve e \right). \\
+\end{aligned}
+\end{equation}
+%
+In dispersive media this expression cannot be evaluated efficiently as written because although $B$ is a sparse matrix, its inverse $B^{-1}$ is in general dense and will never be stored much less calculated.  Looking at Equation \ref{eqn:dispersiveImplementation} one can imagine an iterative approach to solving $B^{-1} \ve x = \ve y$, but it seems to me that this is not in general expected to be stable.  While $\epsilon(t) \ast$ will have been designed for stability by keeping the roots of $a(z)$ inside the unit circle, the roots of $b(z)$ could be anywhere.  We would do much better to work with $A^{-1}$ rather than $B^{-1}$ here because $A^{-1}$ can be implemented as a stable recursive filter.  This can be done.
+
+First exploit the commutation of circulant matrix $B^{-1}$ with circulant matrix $\tilde{\partial}_t$,
+%
+\begin{equation}
+\pp{F}{p} = -(B^{-\dagger} \mathcal{E})^\dagger \tilde{\partial}_t \left(\pp{B}{p} \ve d - \pp{A}{p} \ve e \right).
+\end{equation}
+
+The adjoint field was obtained by solution of a forward system $L'$ whose full matrix can be written out now,
+%
+\begin{equation}
+L'(R \ve v) =
+\begin{bmatrix}
+-\tilde{\partial}_t & & & \hat{\nabla} \times \\
+-B^{sp} & A^{sp} & & \\
+& \tilde{\nabla} \times & \hat{\partial}_t & \\
+& & \mu^{-1} & -1
+\end{bmatrix}
+\begin{bmatrix}
+\ve d' \\ R \mathcal{E} \\ \ve b' \\ R \mathcal{H}
+\end{bmatrix}
+=
+\begin{bmatrix}
+R(\ppp{F}{\ve e})^\dagger \\
+0 \\
+R(\ppp{F}{\ve h})^\dagger \\
+0
+\end{bmatrix}.
+\end{equation}
+%
+Material dispersion was incorporated by the relation $B^{sp} \ve{d}' = A^{sp} R \mathcal{E}$.  Again using the commutation of circulant matrices we can multiply both sides by $A^{-sp} B^{-sp}$ to obtain
+%
+\begin{equation}
+A^{-sp} \ve{d}' = B^{-sp} R \mathcal{E} = R B^{-\dagger} \mathcal{E}.
+\end{equation}
+%
+Time-reversing this line we obtain $B^{-\dagger} \mathcal{E} = R A^{-sp} \ve{d}'$ and
+%
+\begin{equation}
+B^{-\dagger} \mathcal{E} = A^{-\dagger} R \ve{d}'.
+\end{equation}
+%
+We might directly solve $A^\dagger \ve x = R \ve{d}'$ at this point using recursion, or push $A^{-1}$ back up to the right hand side of the sensitivity equation,
+%
+\begin{equation}
+\boxed{
+\pp{F}{p} = -(R \ve{d}')^\dagger \tilde{\partial}_t A^{-1} \left(\pp{B}{p} \ve d - \pp{A}{p} \ve e \right).
+}%boxed
+\end{equation}
+%
+Whether $A^{-1}$ filters the forward or adjoint fields is an implementation decision.
+
+For nondispersive materials the sensitivity formula is just
+%
+\begin{equation}
+\pp{F}{p} = \mathcal{E}^\dagger \tilde{\partial}_t \pp{\epsilon}{p} \ve e.
+\end{equation}
+%
+I have a reversed sign compared to my continuous adjoint derivation but I never actually implemented the volume current formula in my dissertation to be sure.  The sign here is probably the right one, considering how many times I have been over this ground by now.
+
+\section{Time-reversal adjoint for Toeplitz systems}
+
+The time-reversal operator is defined for any interval of timesteps $(n_0, n_1, n_2, ..., n_{N-1})$.  If we label our timesteps 0 through $N-1$ then it swaps $0$ and $N-1$.  If we label our timesteps symmetrically $-N$ through $N$ then timestep 0 is unmoved, 1 is swapped for -1, 2 for -2, and so on.  We still have $RLR = (L^\dagger)^{sp}$.
+
+\subsection{Forward system}
+
+\begin{equation}
+\begin{bmatrix}
+- \frac{\epsilon}{\Delta t} & & & & & \\
+\tilde{\nabla} \times & \frac{\mu}{\Delta t} & & & & \\
+\frac{\epsilon}{\Delta t} & \hat{\nabla} \times & -\frac{\epsilon}{\Delta t} & & & \\
+& -\frac{\mu}{\Delta t} & \tilde{\nabla} \times & \frac{\mu}{\Delta t} & &  \\
+& & \frac{\epsilon}{\Delta t} & \hat{\nabla} \times & -\frac{\epsilon}{\Delta t} & \\
+& & & -\frac{\mu}{\Delta t} & \tilde{\nabla} \times & \frac{\mu}{\Delta t}
+\end{bmatrix}
+%
+\begin{bmatrix}
+\ve e^0 \\ \ve h^{0.5} \\ \ve e^1 \\ \ve h^{1.5} \\ \ve e^2 \\ \ve h^{2.5}
+\end{bmatrix}
+=
+\begin{bmatrix}
+\ve J^{-0.5} \\ -\ve M^0 \\ \ve J^{0.5} \\ -\ve M^1 \\ \ve J^{1.5} \\ -\ve M^2 
+\end{bmatrix}
+\end{equation}
+
+\subsection{Adjoint system}
+\begin{equation}
+\begin{bmatrix}
+-\frac{\epsilon^T}{\Delta t}  & \hat{\nabla} \times & \frac{\epsilon^T}{\Delta t} & & & \\
+& \frac{\mu^T}{\Delta t} & \tilde{\nabla} \times & -\frac{\mu^T}{\Delta t} & & \\
+& & -\frac{\epsilon^T}{\Delta t} & \hat{\nabla}\times & \frac{\epsilon}{\Delta t} & \\
+& & & \frac{\mu^T}{\Delta t} & \tilde{\nabla} \times & -\frac{\mu}{\Delta t} \\
+& & & & -\frac{\epsilon}{\Delta t} & \hat{\nabla} \times \\
+& & & & & \frac{\mu^T}{\Delta t}
+\end{bmatrix}
+%
+\begin{bmatrix}
+\es{E}^0 \\ \es{H}^{0.5} \\ \es E^1 \\ \es H^{1.5} \\ \es E^2 \\ \es H^{2.5}
+\end{bmatrix}
+=
+\begin{bmatrix}
+\ppp{F}{\ve e^0} \\ \ppp{F}{\ve h^{0.5}} \\ \ppp{F}{\ve e^1} \\ \ppp{F}{\ve h^{1.5}} \\ \ppp{F}{\ve e^2} \\ \ppp{F}{\ve h^{2.5}}
+\end{bmatrix}
+\end{equation}
+
+\subsection{Time-reversed adjoint system}
+
+We have some choices about how we write down this system.  Consider $\ve e$ and $\ve h$ to be interleaved in time.
+
+\begin{equation}
+RL_rR =
+\begin{bmatrix}
+\textrm{Nothing to see here yet}
+\end{bmatrix}
+\end{equation}
+
+% Legacy bullshit
+%\begin{equation}
+%$RLR$ =
+%\begin{bmatrix}
+%- \frac{\epsilon^T}{\Delta t} & & & & & \\
+%\tilde{\nabla} \times & \frac{\mu^T}{\Delta t} & & & & \\
+%\frac{\epsilon^T}{\Delta t} & \hat{\nabla} \times & -\frac{\epsilon^T}{\Delta t} & & & \\
+%& -\frac{\mu^T}{\Delta t} & \tilde{\nabla} \times & \frac{\mu^T}{\Delta t} & &  \\
+%& & \frac{\epsilon^T}{\Delta t} & \hat{\nabla} \times & -\frac{\epsilon^T}{\Delta t} & \\
+%& & & -\frac{\mu^T}{\Delta t} & \tilde{\nabla} \times & \frac{\mu^T}{\Delta t}
+%\end{bmatrix}
+%%
+%\begin{bmatrix}
+%\es{E}^2 \\ \es{H}^{2.5} \\ \es E^1 \\ \es H^{1.5} \\ \es E^0 \\ \es H^{0.5}
+%\end{bmatrix}
+%=
+%\begin{bmatrix}
+%\ppp{F}{\ve e^2} \\ \ppp{F}{\ve h^{2.5}} \\ \ppp{F}{\ve e^1} \\ \ppp{F}{\ve h^{1.5}} \\ \ppp{F}{\ve e^0} \\ \ppp{F}{\ve h^{0.5}}
+%\end{bmatrix}
+%\end{equation}
+
+
+
+\section{Time-harmonic formulation}
+
+When the objective function depends on one or a few frequencies only, then the sensitivity calculation can be carried out without saving the entire time history of the fields on the interfaces, and the source terms for the adjoint simulation can be given as amplitudes and phases instead of time-domain data.  This is a very common use case and can save a substantial amount of disk space and computation time.
+
+Here we present a general theory of time-harmonic FDTD sensitivities.
+
+\subsection{Fourier transforms of circulant matrices}
+
+Let the Fourier transform be represented by its matrix $\es F$.  Let $X$ be circulant and $\ve x$ be its first column.  It is a property of circulant matrices that
+%
+\begin{equation}
+\es F X = \operatorname{diag}( \es F \ve x ) \es F.
+\end{equation}
+%
+This is equivalent to the convolution theorem for Fourier transforms, $\es F (\ve x \ast \ve y) = \es F \ve x \cdot \es F \ve y$.
+
+Let $\ve e_\omega \propto e^{i \omega n \Delta t}$ be a column of $\es F$, representing a single frequency component.  Then it is a property of circulant matrices that
+%
+\begin{equation}
+\ve e^\dagger X = \ve e^\dagger \ve x \ve e^\dagger.
+\label{eqn:singleFrequencyCirculant}
+\end{equation}
+%
+This is the single-frequency version of the convolution identity.  It holds as well if $\ve e$ is instead several columns of $\es F$.
+
+\subsection{Time-harmonic FDTD matrix}
+
+Consider an FDTD simulation driven by time-harmonic $\ve s = \hat{\ve s} \ve e$.  For a linear time-invariant Maxwell operator $L$, this is a \emph{time-harmonic} simulation,
+%
+\begin{equation}
+L \ve u = \hat{\ve s} \ve e.
+\end{equation}
+%
+Vectors with a hat $\hat{\ve x}$ are taken to have no time index, and $\ve e$ has only a time index, so the outer product $\hat{\ve s} \ve e$ has the same indices as an ordinary vector $\ve s$.  Left-multiplying $\ve e^\dagger$ produces a purely time-harmonic system,
+%
+\begin{equation}
+\begin{aligned}
+L \ve u &= \ve s \\
+\ve e^\dagger L \ve u &= \ve e^\dagger \ve s \\
+\end{aligned}
+\end{equation}
+%
+and employing the circulant matrix identity Equation \ref{eqn:singleFrequencyCirculant}, we can identify the phasor operator $\hat L$ and phasor fields $\hat{\ve u}$:
+%
+\begin{equation}
+\begin{aligned}
+\ve{e}^\dagger L \ve u &= \ve{e}^\dagger \ve{l} \ve{e}^\dagger \ve u = \hat{L} \hat{\ve u}, \\
+\hat L &\equiv \ve{e}^\dagger \ve{l}, \\
+\hat{\ve u} &\equiv \ve{e}^\dagger \ve u
+\end{aligned}
+\end{equation}
+%
+where $\ve l$ is the first column of $L$ in its time indices.  So the effect of this single-frequency FDTD is to calculate $\hat{\ve u}$ from
+%
+\begin{equation}
+\hat{L} \hat{\ve u} = \hat{\ve s}.
+\end{equation}
+%
+The full time-harmonic system is\footnote{Using the timestep advance operator $z = e^{i \omega \Delta t}$.}
+%
+\begin{equation}
+\hat{L} \hat{\ve u} =
+\begin{bmatrix}
+-\frac{z-1}{\Delta t} & & & \hat{\nabla} \times \\
+-b(z) & a(z) & & \\
+& \tilde{\nabla} \times & \frac{1 - z^{-1}}{\Delta t} & \\
+& & \mu^{-1} & -1
+\end{bmatrix}
+\begin{bmatrix}
+\hat{\ve{d}} \\ \hat{\ve{e}} \\ \hat{\ve{b}} \\ \hat{\ve{h}}
+\end{bmatrix}
+=
+\begin{bmatrix}
+\hat{\ve{J}} \\ 0 \\ -\hat{\ve{M}} \\ 0 
+\end{bmatrix}.
+\end{equation}
+%
+Its reduced form is
+%
+\begin{equation}
+	\hat{L}_r \hat{\ve{u}}_r =
+	\begin{bmatrix}
+	-\frac{z - 1}{\Delta t} \epsilon(z) & \hat{\nabla}\times \\
+	\tilde{\nabla}\times & \frac{1 - z^{-1}}{\Delta t} \mu
+	\end{bmatrix}
+	\begin{bmatrix} \hat{\ve{e}} \\ \hat{\ve{h}} \end{bmatrix}
+	=
+	\begin{bmatrix} \hat{\ve{J}} \\ -\hat{\ve{M}} \end{bmatrix}.
+\end{equation}
+%
+There is probably no reason to write out the full time-harmonic system unless $\hat{\ve d}$ or $\hat{\ve b}$ is used in the objective function.  In the following I sloppily use $\hat{L}$ to stand for both $\hat{L}$ and $\hat{L}_r$ as defined here.
+
+The sensitivity of the reduced system is
+%
+\begin{equation}
+	\pp{\hat{L}_r}{p} \hat{\ve u}_r + \hat{L}_r \pp{\hat{\ve u}_r}{p} = \pp{\hat{\ve s}}{p}
+\end{equation}
+%
+\begin{equation}
+	\begin{bmatrix}
+	-\frac{z - 1}{\Delta t} \epsilon(z) & \hat{\nabla}\times \\
+	\tilde{\nabla}\times & \frac{1 - z^{-1}}{\Delta t} \mu
+	\end{bmatrix}
+	\begin{bmatrix}
+	\pp{\hat{\ve e}}{p} \\ \pp{\hat{\ve h}}{p}
+	\end{bmatrix}
+	=
+	- \begin{bmatrix}
+	-\frac{z-1}{\Delta t} \pp{\epsilon(z)}{p} & \\
+	& \frac{1 - z^{-1}}{\Delta t} \pp{\mu(z)}{p}
+	\end{bmatrix}
+	\begin{bmatrix} \hat{\ve{e}} \\ \hat{\ve{h}} \end{bmatrix}
+	+ 
+	\begin{bmatrix} \pp{\hat{\ve{J}}}{p} \\ - \pp{\hat{\ve{M}}}{p} \end{bmatrix}.
+\end{equation}
+
+The adjoint reduced matrix is
+%
+\begin{equation}
+	\hat{L}_r^\dagger =
+	\begin{bmatrix}
+	-\frac{z^{-1} - 1}{\Delta t} \epsilon(z)^\dagger & \hat{\nabla}\times \\
+	\tilde{\nabla}\times & \frac{1 - z}{\Delta t} \mu^\dagger
+	\end{bmatrix}.
+\end{equation}
+%
+Like in the time domain, $\hat{L}^\dagger$ is closely related to a forward matrix,
+%
+\begin{equation}
+\begin{aligned}
+	\hat{L}'_r &=
+	\begin{bmatrix}
+	-\frac{z - 1}{\Delta t} \epsilon(z)^T & \hat{\nabla}\times \\
+	\tilde{\nabla}\times & \frac{1 - z^{-1}}{\Delta t} \mu^T
+	\end{bmatrix} \\
+	&= (\hat{L}_r^\dagger)^\ast.
+\end{aligned}
+\end{equation}
+%
+Then the adjoint field is solved for from
+%
+\begin{equation}
+\boxed{
+	\hat{L}'_r \hat{\ve v}^\ast = \left( \pp{G}{\hat{\ve u}} \right)^T
+}%boxed
+\end{equation}
+%
+where $\ppp{G}{\hat{\ve u}}$ is a Wirtinger derivative.  The system sensitivity is
+%
+\begin{equation}
+	\pp{G}{\hat{\ve u}} \pp{\hat{\ve u}}{p} =
+	\begin{bmatrix}
+		\es{E}^\dagger & \es{H}^\dagger
+	\end{bmatrix}
+	\left(
+		\begin{bmatrix}
+			\pp{\hat{\ve J}}{p} \\ -\pp{\hat{\ve M}}{p}
+		\end{bmatrix}
+		-	
+	    	\begin{bmatrix}
+	    	-\frac{z-1}{\Delta t} \pp{\epsilon(z)}{p} & \\
+	    	& \frac{1 - z^{-1}}{\Delta t} \pp{\mu(z)}{p}
+	    	\end{bmatrix}
+		\begin{bmatrix}
+			\hat{\ve e} \\ \hat{\ve h}
+		\end{bmatrix}
+	\right)
+\end{equation}
+%
+\begin{equation}
+\boxed{
+	\pp{G}{\hat{\ve u}} \pp{\hat{\ve u}}{p} =
+	\es{E}^\dagger \pp{\hat{\ve J}}{p} + \frac{z-1}{\Delta t} \es{E}^\dagger \pp{\epsilon(z)}{p} \hat{\ve e}
+	- \es{H}^\dagger \pp{\hat{\ve M}}{p} - \frac{1 - z^{-1}}{\Delta t} \es{H}^\dagger \pp{\mu(z)}{p} \hat{\ve h}.
+}% boxed
+\end{equation}
+%
+As shown below, to get the system sensitivity with Wirtinger derivatives,
+%
+\begin{equation}
+\pp{G}{p} = 2 \Re \left\{ \pp{G}{\hat{\ve u}} \pp{\hat{\ve u}}{p} \right\}.
+\end{equation}
+
+
+
+\subsection{Single-frequency objective functions}
+
+To evaluate the monochromatic performance of an optical system we treat it as though only one frequency were present.  Consider an objective function sensitive to only one frequency $\omega$.  Let the corresponding column of $\es F$ be $e$.  Then define
+%
+\begin{equation}
+F(\ve u) = G(\ve e^\dagger \ve u).
+\end{equation}
+%
+The monochromatic objective function $G(\hat{\ve u})$ can be differentiated in the sense of Wirtinger\footnote{$\pp{f}{z} \equiv \frac{1}{2}\left( \pp{f}{x} - i \pp{f}{y}\right), \pp{f}{z^\ast} \equiv \frac{1}{2} \left( \pp{f}{x} + i \pp{f}{y} \right)$}:
+%
+\begin{equation}
+\pp{G}{p} = \pp{G}{\hat{\ve u}} \pp{\hat{\ve u}}{p} + \pp{G}{\hat{\ve u}^\ast} \pp{\hat{\ve u}^\ast}{p}.
+\end{equation}
+%
+Use the conjugation identity for Wirtinger derivatives\footnote{$\pp{f}{z^\ast} = \left( \pp{f^\ast}{z}\right)^\ast$} and the fact that $G$ is real-valued,
+%
+\begin{equation}
+\boxed{
+\pp{G}{p} = 2 \Re \left\{ \pp{G}{\hat{\ve u}} \pp{\hat{\ve u}}{p} \right\}.
+}%boxed
+\label{eqn:dGdp}
+\end{equation}
+%
+The derivative of $F$ is
+%
+\begin{equation}
+\pp{F}{\ve u} = \pp{G}{\hat{\ve u}} \pp{\hat{\ve u}}{\ve u} + \pp{G}{\hat{\ve u}^\ast} \pp{\hat{\ve u}^\ast}{\ve u} = 2 \Re \left\{ \pp{G}{\hat{\ve u}} \pp{\hat{\ve u}}{\ve u} \right\}.
+\end{equation}
+%
+\begin{equation}
+\boxed{
+\pp{F}{\ve u} = 2 \Re \left\{ \pp{G}{\hat{\ve u}} \ve{e}^\dagger \right\}.
+}%boxed
+\end{equation}
+
+The system sensitivity can be calculated using a brute-force time-domain approach or with a time-harmonic approach.
+
+
+\subsubsection{Single-frequency objective function summary}
+
+The forward illumination source can be anything at all.  Whether it is a pulse or continuous-wave or anything else has no bearing on whether to calculate system sensitivity in the frequency domain or in the time domain.
+
+Single-frequency objective function with time-domain boundary outputs: calculate time-domain sensitivity.
+
+Single-frequency objective function with time-harmonic boundary outputs: calculate time-harmonic sensitivity.
+
+Arbitrary objective function: need time-domain boundary outputs and time-domain sensitivity.
+
+\subsection{Sensitivity in frequency domain}
+
+Quickly run through the sensitivity for a time-harmonic system.
+%
+\begin{equation}
+\begin{aligned}
+	\hat{L} \hat{\ve u} &= \hat{\ve s} \\
+	\hat{L} \pp{\hat{\ve u}}{p} &= \pp{\hat{\ve s}}{p} - \pp{\hat{L}}{p} \hat{\ve u} \\
+	\hat{\ve v}^\dagger \hat{L} \pp{\hat{\ve u}}{p} &= \hat{\ve v}^\dagger \left( \pp{\hat{\ve s}}{p} - \pp{\hat{L}}{p} \hat{\ve u} \right)
+\end{aligned}
+\end{equation}
+%
+Solve the adjoint system such that
+%
+\begin{equation}
+\hat{\ve v}^\dagger \hat{L} = \pp{G}{\hat{\ve u}}.
+\end{equation}
+%
+Then
+%
+\begin{equation}
+\pp{G}{\hat{\ve u}} \pp{\hat{\ve u}}{p} =  \hat{\ve v}^\dagger \left( \pp{\hat{\ve s}}{p} - \pp{\hat{L}}{p} \hat{\ve u} \right)
+\end{equation}
+%
+and the system sensitivity $\ppp{G}{p}$ is as above (Equation \ref{eqn:dGdp}):
+%
+\begin{equation}
+\boxed{
+\pp{G}{p} = 2  \Re \left\{ \hat{\ve v}^\dagger \left( \pp{\hat{\ve s}}{p} - \pp{\hat{L}}{p} \hat{\ve u} \right) \right\}.
+} % boxed
+\end{equation}
+
+The moral of the story is, calculate $\ppp{G}{\hat{\ve u}}$ in the sense of Wirtinger and use that for the adjoint current source.
+
+\subsection{Choosing a source pulse}
+
+Let $\hat{\ve s}$ be the desired source amplitude and phase at frequency $\omega$.  We will create a band-limited source $\ve s = \Re \left\{ \hat{\ve p} \gamma(t) \right\}$ with these properties.  Choose a complex waveform $\gamma(t)$ with good separation between its positive and negative frequency components, so $\hat \gamma \equiv \ve e^\dagger \gamma(t) \gg \ve e^\dagger \gamma(t)^\ast$.
+%
+\begin{equation}
+\begin{aligned}
+\ve s &= \frac{1}{2} \left( \hat{\ve p} \gamma(t) + \hat{\ve p}^\ast \gamma(t)^\ast \right) \\
+\hat{\ve s} &= \frac{1}{2} \left( \hat{\ve p} \ve e^\dagger \gamma(t) + \hat{\ve p}^\ast \ve{e}^\dagger \gamma(t)^\ast \right) \approx \frac{1}{2} \hat{\ve p} \hat{\gamma}.
+\end{aligned}
+\end{equation}
+%
+Solve for $\hat{\ve p}$ to get the form of the source pulse,
+%
+\begin{equation}
+\ve s = \Re \left\{ \frac{2\hat{\ve s} }{\hat \gamma} \gamma(t) \right\}.
+\end{equation}
+
+
+\subsection{Multi-frequency source pulses}
+
+How to find a source pulse $\ve f$ with desired single-frequency behaviors at arbitrary frequencies?
+%
+\begin{equation}
+\begin{aligned}
+	\ve e_{\omega_0}^\dagger \ve f &= \hat{\ve f}_0 \\ 
+	\ve e_{\omega_1}^\dagger \ve f &= \hat{\ve f}_1 \\ 
+	\vdots
+\end{aligned}
+\end{equation}
+%
+I will outline one approach, broadly.  Construct several band-limited source pulses $\ve s_{\omega_0}, \ve s_{\omega_1}, \cdots$ which contain the desired frequency components.  Assemble $\ve f = \tilde{\ve f}_{\omega_0} \ve s_{\omega 0} + \tilde{\ve f}_{\omega_1} \ve s_{\omega_1} + \cdots$.  Then solve for $\tilde{\ve f}_{\omega_i}$ by least squares from
+%
+\begin{equation}
+    \begin{bmatrix}
+	    \ve e_{\omega_0} & \ve e_{\omega_1} & \cdots
+    \end{bmatrix}^\dagger
+    \begin{bmatrix}
+	    \ve s_{\omega_0} & \ve s_{\omega_1} & \cdots
+    \end{bmatrix}
+    \begin{bmatrix}
+        \tilde{\ve f}_{\omega_0} \\
+        \tilde{\ve f}_{\omega_1} \\
+        \vdots
+    \end{bmatrix}
+    =
+    \begin{bmatrix}
+        \hat{\ve f}_0 \\
+        \hat{\ve f}_1 \\
+        \vdots
+    \end{bmatrix}.
+\end{equation}
+%
+Whether the resulting function has any nice interpolating properties in the frequency domain will depend on the choices of $\ve{s}_{\omega_i}$.  For instance, $\ve{s}_{\omega} = \ve{e}_\omega$ could be used here.
+
+If it is really desired to have nice interpolation in the frequency domain, \emph{e.g.} for construction of a focused white-light pulse or somesuch, perhaps one could try interpolating with Hermite functions.  They could be trivially-ish constructed to exactly match the desired values, and they have Gaussian envelopes in both time and frequency space.  The downside is that they are susceptible to the Runge phenomenon.
+
+If the interpolating points are equally-spaced in frequency then sinc interpolation might be applicable.
+
+
+\subsection{Options for sensitivity calculation}
+
+\subsubsection{Time-domain sensitivity of single-frequency objective function}
+
+This method uses the most straightforward adjoint source function but needs to retain the entire time-history of $\ve u$ and $\ve v$ in all pixels that are sensitive to design parameters.  The adjoint source has an abrupt start.  Even if the simulation does not run to convergence (\emph{e.g.} if it does not ring down completely or does not ring up to steady-state) the sensitivity should be exact\footnote{Judge for yourself whether the exact sensitivity of the objective function of non-converged fields is worth calculating.}.
+
+\begin{enumerate}
+\item Choose $\ve s$ such that $\ve{e}^\dagger \ve s = \hat{\ve s}$.
+\item Solve $L \ve u = \ve s$ with FDTD and calculate $\hat{\ve u} = \ve e^\dagger \ve u$.
+\item Calculate $G(\hat{\ve u})$ and $\ppp{G}{\hat{\ve u}}$.
+\item Calculate $\ppp{F}{\ve u} = 2 \Re \left\{ \pp{G}{\hat{\ve u}} \ve{e}^\dagger \right\}$.
+\item Solve $L^\dagger \ve v = (\ppp{F}{\ve u})^\dagger$ with adjoint FDTD or time-reversed FDTD.
+\item Calculate the sensitivity $\pp{F}{p} = \ve{v}^\dagger \left( \pp{\ve s}{p} - \pp{L}{p} \ve u\right)$.
+\end{enumerate}
+
+\subsubsection{Time-harmonic sensitivity of single-frequency objective function}
+
+This method does not need to retain any time histories if $\hat{\ve u}$ and $\hat{\ve v}$ are calculated on the fly in the FDTD code.  The sensitivity of $F$ will become increasingly accurate as the simulation rings down or comes to convergence, but will not be accurate if the simulation is cut short.
+
+\begin{enumerate}
+\item Choose $\ve s$ such that $\ve{e}^\dagger \ve s = \hat{\ve s}$.
+\item Solve $L \ve u = \ve s$ with FDTD and calculate $\hat{\ve u} = \ve e^\dagger \ve u$.
+\item Calculate $G(\hat{\ve u})$ and $\ppp{G}{\hat{\ve u}}$.
+\item Choose $\ve h$ such that $\ve e^\dagger \ve h = ( \ppp{G}{\hat{\ve u}})^\dagger$.
+\item Solve $L^\dagger \ve v = \ve h$ with adjoint FDTD or time-reversed FDTD and calculate $\hat{\ve v} = \ve{e}^\dagger \ve v$.
+\item Calculate the sensitivity $\pp{G}{p} = 2 \Re \left\{ \hat{\ve v}^\dagger \left( \pp{\hat{\ve s}}{p} - \pp{\hat L}{p} \hat{\ve u} \right) \right\}$.
+\end{enumerate}
+
+
+
+

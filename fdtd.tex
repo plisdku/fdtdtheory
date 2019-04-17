@@ -1,0 +1,30 @@
+%\documentclass[11pt]{amsart}
+\documentclass{amsbook}
+\usepackage{geometry}                % See geometry.pdf to learn the layout options. There are lots.
+\geometry{letterpaper}                   % ... or a4paper or a5paper or ... 
+%\geometry{landscape}                % Activate for for rotated page geometry
+%\usepackage[parfill]{parskip}    % Activate to begin paragraphs with an empty line rather than an indent
+\usepackage{graphicx}
+\usepackage{amssymb}
+\usepackage{bbold}
+\usepackage{epstopdf} % for double-one identity matrix, \mathbb{1}.
+\usepackage{myMacros}
+\DeclareGraphicsRule{.tif}{png}{.png}{`convert #1 `dirname #1`/`basename #1 .tif`.png}
+
+\title{Adjoint Dispersive FDTD via Forward FDTD}
+\author{Paul Hansen}
+\date{April 13, 2018}                                           % Activate to display a given date or no date
+
+\begin{document}
+\maketitle
+
+\tableofcontents
+
+\numberwithin{equation}{chapter}
+\include{chapter01}
+
+%\nocite{*}
+\bibliographystyle{alpha}
+\bibliography{mybib}% Produces the bibliography via BibTeX.
+
+\end{document}
